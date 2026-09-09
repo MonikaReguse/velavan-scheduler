@@ -26,14 +26,23 @@ export default function HistoryPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to permanently delete this post from all platforms?")) return;
+  const handleDelete = async (id: string, platforms: string[]) => {
+    const hasInstagram = platforms?.includes('instagram');
+    const confirmMsg = hasInstagram
+      ? "This will delete the post from Facebook, LinkedIn, YouTube etc.\n\n⚠️ INSTAGRAM NOTE: Instagram does not allow deletion via API. You will need to manually delete it from the Instagram app.\n\nContinue?"
+      : "Are you sure you want to permanently delete this post from all platforms?";
+
+    if (!confirm(confirmMsg)) return;
     
     try {
       const res = await fetch(`/api/posts/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) {
-        alert("Post deleted successfully from the internet!");
+        let msg = "Post deleted from all platforms!";
+        if (hasInstagram) {
+          msg += "\n\n⚠️ Remember to also manually delete it from your Instagram app.";
+        }
+        alert(msg);
         fetchPosts();
       } else {
         alert("Error deleting post: " + data.error);
@@ -115,7 +124,7 @@ export default function HistoryPage() {
                     Edit
                   </button>
                   <button 
-                    onClick={() => handleDelete(post.id)}
+                    onClick={() => handleDelete(post.id, post.platforms)}
                     className="px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
                   >
                     Delete
