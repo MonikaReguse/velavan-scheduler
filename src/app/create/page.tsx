@@ -98,7 +98,12 @@ export default function CreatePost() {
       });
 
       const data = await res.json();
-      if (res.ok && data.results) {
+      if (res.ok && data.isScheduled) {
+        alert(`SUCCESS! Post scheduled for ${new Date(data.scheduledTime).toLocaleString()}`);
+        setContent("");
+        setMedia(null);
+        setScheduledTime("");
+      } else if (res.ok && data.results) {
         const successPlatforms = data.results.filter((r: any) => r.status === 'success').map((r: any) => r.platform);
         const errorPlatforms = data.results.filter((r: any) => r.status === 'error');
         
@@ -111,11 +116,13 @@ export default function CreatePost() {
         if (successPlatforms.length === selectedPlatforms.length) {
           setContent("");
           setMedia(null);
+          setScheduledTime("");
         }
       } else if (res.ok) {
         alert("Post published successfully!");
         setContent("");
         setMedia(null);
+        setScheduledTime("");
       } else {
         alert("Error: " + data.error);
       }

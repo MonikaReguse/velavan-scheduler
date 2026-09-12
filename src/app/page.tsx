@@ -1,111 +1,136 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useBusiness } from '@/context/BusinessContext';
 
 export default function Dashboard() {
   const { selectedBusinessId, businesses } = useBusiness();
   const currentBusiness = businesses.find(b => b.id === selectedBusinessId);
 
-  // Mocked data mapped by business ID
-  const allPosts: Record<string, any[]> = {
-    'business-1': [
-      {
-        id: '1',
-        content: 'Excited to announce our new product launch! 🚀',
-        scheduledTime: new Date(Date.now() + 1000 * 60 * 60 * 24).toLocaleString(),
-        status: 'PENDING',
-        platforms: ['Facebook', 'Instagram'],
-      }
-    ],
-    'business-2': [
-      {
-        id: '2',
-        content: 'Check out our latest blog post on marketing tips.',
-        scheduledTime: new Date(Date.now() + 1000 * 60 * 60 * 48).toLocaleString(),
-        status: 'PUBLISHED',
-        platforms: ['LinkedIn', 'Twitter (X)'],
-      }
-    ]
-  };
-
-  const allAccounts: Record<string, any[]> = {
-    'business-1': [
-      { platform: 'Facebook Page', handle: '@mainbrand' },
-      { platform: 'Instagram', handle: '@mainbrand_ig' },
-    ],
-    'business-2': [
-      { platform: 'LinkedIn', handle: 'clientacorp' },
-    ]
-  };
-
-  const initialPosts = allPosts[selectedBusinessId] || [];
-  const currentAccounts = allAccounts[selectedBusinessId] || [];
-
-  const [localPosts, setLocalPosts] = useState(allPosts);
-
-  const upcomingPosts = localPosts[selectedBusinessId] || [];
+  const [upcomingPosts, setUpcomingPosts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [editingPost, setEditingPost] = useState<any>(null);
   const [editContent, setEditContent] = useState('');
+
+  const fetchScheduledPosts = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/scheduled?businessId=${selectedBusinessId}`);
+      const data = await res.json();
+      if (data.success) {
+        setUpcomingPosts(data.posts || []);
+      }
+    } catch (e) {
+      console.error("Failed to fetch scheduled posts:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchScheduledPosts();
+  }, [selectedBusinessId]);
 
   const handleEdit = (post: any) => {
     setEditingPost(post);
     setEditContent(post.content);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingPost) return;
-    const updatedPosts = upcomingPosts.map((p) => 
-      p.id === editingPost.id ? { ...p, content: editContent } : p
-    );
-    setLocalPosts({
-      ...localPosts,
-      [selectedBusinessId]: updatedPosts
-    });
-    setEditingPost(null);
+    try {
+      const res = await fetch(`/api/scheduled/${editingPost.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: editContent })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setEditingPost(null);
+        fetchScheduledPosts();
+      } else {
+        alert("Error updating post: " + data.error);
+      }
+    } catch (e) {
+      alert("Failed to update scheduled post");
+    }
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this scheduled post?')) {
-      const updatedPostsForBusiness = upcomingPosts.filter(post => post.id !== id);
-      setLocalPosts({
-        ...localPosts,
-        [selectedBusinessId]: updatedPostsForBusiness
-      });
+  const handleDelete = async (id: string) => {
+    if (confirm('Are you sure you want to cancel this scheduled post?')) {
+      try {
+        const res = await fetch(`/api/scheduled/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+          fetchScheduledPosts();
+        } else {
+          alert("Error cancelling post: " + data.error);
+        }
+      } catch (e) {
+        alert("Failed to cancel scheduled post");
+      }
     }
   };
 
   return (
-    <div className="px-4 py-6 sm:px-0">
+    <div className="px-4 py-6 sm:px-0 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+          <p className="text-sm text-gray-500">View and manage your upcoming scheduled posts.</p>
+        </div>
         <Link 
           href="/create" 
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium"
+          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium transition-colors"
         >
           + New Post
         </Link>
       </div>
-      <div className="bg-white shadow overflow-hidden sm:rounded-md">
+
+      <div className="bg-white shadow overflow-hidden sm:rounded-md border border-gray-200">
+        <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">Scheduled Posts</h2>
+          <button 
+            onClick={fetchScheduledPosts} 
+            className="text-xs text-blue-600 hover:underline font-medium"
+          >
+            Refresh
+          </button>
+        </div>
+
         <ul role="list" className="divide-y divide-gray-200">
-          {upcomingPosts.length === 0 ? (
+          {loading ? (
             <li className="px-4 py-12 text-center text-gray-500">
-              No scheduled posts for {currentBusiness?.name}. Click "New Post" to get started!
+              Loading scheduled posts...
+            </li>
+          ) : upcomingPosts.length === 0 ? (
+            <li className="px-4 py-12 text-center text-gray-500">
+              No scheduled posts for {currentBusiness?.name || 'this business'}. Click "New Post" to schedule one!
             </li>
           ) : (
             upcomingPosts.map((post) => (
               <li key={post.id} className="px-4 py-4 sm:px-6 hover:bg-gray-50">
                 <div className="flex items-center justify-between">
                   <div className="flex flex-col md:flex-row md:items-center justify-between w-full">
-                    <p className="text-sm font-medium text-gray-900 truncate mb-2 md:mb-0 max-w-lg">{post.content}</p>
+                    <div className="flex items-center space-x-3 mb-2 md:mb-0 max-w-lg">
+                      {post.mediaUrl && (
+                        <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100 border">
+                          {post.mediaType === 'video' ? (
+                            <video src={post.mediaUrl} className="w-full h-full object-cover" />
+                          ) : (
+                            <img src={post.mediaUrl} className="w-full h-full object-cover" />
+                          )}
+                        </div>
+                      )}
+                      <p className="text-sm font-medium text-gray-900 line-clamp-2">{post.content}</p>
+                    </div>
+
                     <div className="flex items-center space-x-4">
-                      <p className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        post.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'
-                      }`}>
+                      <span className="px-2.5 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
                         {post.status}
-                      </p>
+                      </span>
                       <button 
                         onClick={() => handleEdit(post)}
                         className="text-blue-600 hover:text-blue-800 text-sm font-medium focus:outline-none hover:underline"
@@ -116,20 +141,21 @@ export default function Dashboard() {
                         onClick={() => handleDelete(post.id)}
                         className="text-red-600 hover:text-red-800 text-sm font-medium focus:outline-none hover:underline"
                       >
-                        Delete
+                        Cancel
                       </button>
                     </div>
                   </div>
                 </div>
+
                 <div className="mt-2 sm:flex sm:justify-between">
                   <div className="sm:flex text-sm text-gray-500">
                     <p className="flex items-center">
-                      Platforms: {post.platforms.join(', ')}
+                      Platforms: <span className="ml-1 font-medium text-gray-700">{Array.isArray(post.platforms) ? post.platforms.join(', ') : post.platforms}</span>
                     </p>
                   </div>
                   <div className="mt-2 flex items-center text-sm text-gray-500 sm:mt-0">
                     <p>
-                      Scheduled for: {post.scheduledTime}
+                      Scheduled for: <span className="font-medium text-gray-700">{new Date(post.scheduledTime).toLocaleString()}</span>
                     </p>
                   </div>
                 </div>
@@ -139,29 +165,30 @@ export default function Dashboard() {
         </ul>
       </div>
 
+      {/* Edit Modal */}
       {editingPost && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
-            <div className="p-4 border-b">
-              <h3 className="text-lg font-semibold text-gray-900">Edit Scheduled Post</h3>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden">
+            <div className="p-4 border-b bg-gray-50">
+              <h3 className="font-semibold text-gray-900">Edit Scheduled Post</h3>
             </div>
             <div className="p-4">
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
-                className="w-full h-32 p-3 border rounded-md focus:ring-blue-500 focus:border-blue-500 resize-none outline-none"
+                className="w-full h-40 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none resize-none"
               ></textarea>
             </div>
-            <div className="p-4 border-t bg-gray-50 flex justify-end gap-3">
+            <div className="p-4 border-t bg-gray-50 flex justify-end gap-2">
               <button 
                 onClick={() => setEditingPost(null)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border hover:bg-gray-50 rounded-lg transition-colors"
               >
                 Cancel
               </button>
               <button 
                 onClick={handleSaveEdit}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700"
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
               >
                 Save Changes
               </button>
