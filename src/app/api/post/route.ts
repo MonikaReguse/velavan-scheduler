@@ -18,8 +18,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No configuration found for this business' }, { status: 400 });
     }
 
-    // Determine if user explicitly requested a scheduled post
-    const shouldSchedule = isSchedule || (scheduledTime && new Date(scheduledTime).getTime() > (Date.now() - 60000));
+    // Strict decision:
+    // If isSchedule is explicitly true -> Save as Scheduled Post
+    // If isSchedule is explicitly false -> Publish Immediately Now
+    // Otherwise check if scheduledTime is in future
+    const shouldSchedule = isSchedule === true || (isSchedule !== false && Boolean(scheduledTime) && new Date(scheduledTime).getTime() > Date.now() - 60000);
 
     if (shouldSchedule && scheduledTime) {
       // Save post as PENDING in scheduled_posts database
@@ -53,7 +56,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // Publish immediately if Post Now button was clicked or no schedule requested
+    // Publish immediately if Post Now button was clicked
     const results = await publishPostToPlatforms({
       businessId,
       content,

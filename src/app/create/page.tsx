@@ -7,7 +7,12 @@ export default function CreatePost() {
   const [content, setContent] = useState('');
   const [media, setMedia] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState<string | null>(null);
-  const [scheduledTime, setScheduledTime] = useState('');
+
+  // 12-Hour AM/PM Schedule State
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleHour, setScheduleHour] = useState('03');
+  const [scheduleMinute, setScheduleMinute] = useState('30');
+  const [scheduleAmpm, setScheduleAmpm] = useState('PM');
 
   const [platforms, setPlatforms] = useState({
     facebook: false,
@@ -37,6 +42,21 @@ export default function CreatePost() {
   const { selectedBusinessId } = useBusiness();
   const [isPosting, setIsPosting] = useState(false);
 
+  const getScheduledISO = () => {
+    if (!scheduleDate) return null;
+    let hour = parseInt(scheduleHour, 10);
+    if (scheduleAmpm === 'PM' && hour < 12) hour += 12;
+    if (scheduleAmpm === 'AM' && hour === 12) hour = 0;
+    
+    const paddedHour = String(hour).padStart(2, '0');
+    const paddedMin = String(scheduleMinute).padStart(2, '0');
+    
+    const localDateTimeStr = `${scheduleDate}T${paddedHour}:${paddedMin}`;
+    const d = new Date(localDateTimeStr);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString();
+  };
+
   const handleSubmit = async (e: React.FormEvent | React.MouseEvent, isScheduleTarget: boolean = false) => {
     if (e && e.preventDefault) e.preventDefault();
 
@@ -54,9 +74,18 @@ export default function CreatePost() {
       return;
     }
 
-    if (isScheduleTarget && !scheduledTime) {
-      alert("Please select a date and time in 'Schedule Time' before clicking Schedule Post.");
-      return;
+    let payloadScheduledTime: string | null = null;
+
+    if (isScheduleTarget) {
+      if (!scheduleDate) {
+        alert("Please select a Schedule Date and Time before clicking Schedule Post.");
+        return;
+      }
+      payloadScheduledTime = getScheduledISO();
+      if (!payloadScheduledTime) {
+        alert("Invalid Date or Time selected.");
+        return;
+      }
     }
 
     setIsPosting(true);
@@ -91,8 +120,6 @@ export default function CreatePost() {
       }
     }
 
-    const payloadScheduledTime = isScheduleTarget && scheduledTime ? new Date(scheduledTime).toISOString() : null;
-
     try {
       const res = await fetch('/api/post', {
         method: 'POST',
@@ -110,10 +137,10 @@ export default function CreatePost() {
 
       const data = await res.json();
       if (res.ok && data.isScheduled) {
-        alert(`SUCCESS! Post scheduled for ${new Date(data.scheduledTime).toLocaleString()}`);
+        alert(`SUCCESS! Post scheduled for ${new Date(data.scheduledTime).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`);
         setContent("");
         setMedia(null);
-        setScheduledTime("");
+        setScheduleDate("");
       } else if (res.ok && data.results) {
         const successPlatforms = data.results.filter((r: any) => r.status === 'success').map((r: any) => r.platform);
         const errorPlatforms = data.results.filter((r: any) => r.status === 'error');
@@ -127,13 +154,13 @@ export default function CreatePost() {
         if (successPlatforms.length === selectedPlatforms.length) {
           setContent("");
           setMedia(null);
-          setScheduledTime("");
+          setScheduleDate("");
         }
       } else if (res.ok) {
         alert("Post published successfully!");
         setContent("");
         setMedia(null);
-        setScheduledTime("");
+        setScheduleDate("");
       } else {
         alert("Error: " + data.error);
       }
@@ -209,19 +236,60 @@ export default function CreatePost() {
                 )}
               </div>
 
-              {/* Schedule Time */}
-              <div>
-                <label htmlFor="scheduledTime" className="block text-sm font-semibold text-gray-700 mb-2">
-                  Schedule Time (Optional for Post Now)
+              {/* Schedule Date & Time with AM/PM */}
+              <div className="border border-gray-200 rounded-xl p-4 bg-gray-50/50">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Schedule Date & Time (Select AM / PM)
                 </label>
-                <input
-                  type="datetime-local"
-                  name="scheduledTime"
-                  id="scheduledTime"
-                  className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                  value={scheduledTime}
-                  onChange={(e) => setScheduledTime(e.target.value)}
-                />
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  {/* Date Input */}
+                  <div className="sm:col-span-2">
+                    <input
+                      type="date"
+                      className="w-full border border-gray-300 rounded-lg p-2.5 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={scheduleDate}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Hour & Minute */}
+                  <div className="flex items-center space-x-1">
+                    <select
+                      value={scheduleHour}
+                      onChange={(e) => setScheduleHour(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg p-2.5 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      {['01','02','03','04','05','06','07','08','09','10','11','12'].map((h) => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                    <span className="font-bold text-gray-500">:</span>
+                    <select
+                      value={scheduleMinute}
+                      onChange={(e) => setScheduleMinute(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg p-2.5 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      {['00','05','10','15','20','25','30','35','40','45','50','55'].map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* AM / PM Selector */}
+                  <div>
+                    <select
+                      value={scheduleAmpm}
+                      onChange={(e) => setScheduleAmpm(e.target.value)}
+                      className="w-full border border-blue-300 bg-blue-50 text-blue-800 font-bold rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="AM">AM</option>
+                      <option value="PM">PM</option>
+                    </select>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  To schedule, select date and time above, then click <strong>Schedule Post</strong>.
+                </p>
               </div>
 
               {/* Publish To */}
