@@ -6,8 +6,8 @@ import { publishPostToPlatforms, getConfig } from '@/lib/publisher';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { businessId, content, platforms, mediaUrl, mediaType, scheduledTime } = body;
-    console.log("Incoming POST payload:", { platforms, mediaUrl, mediaType, scheduledTime });
+    const { businessId, content, platforms, mediaUrl, mediaType, scheduledTime, isSchedule } = body;
+    console.log("Incoming POST payload:", { platforms, mediaUrl, mediaType, scheduledTime, isSchedule });
 
     if (!businessId || !content || !platforms || platforms.length === 0) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -18,10 +18,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No configuration found for this business' }, { status: 400 });
     }
 
-    // Check if user requested a scheduled post in the future
-    const isFutureSchedule = scheduledTime && new Date(scheduledTime).getTime() > Date.now();
+    // Determine if user explicitly requested a scheduled post
+    const shouldSchedule = isSchedule || (scheduledTime && new Date(scheduledTime).getTime() > (Date.now() - 60000));
 
-    if (isFutureSchedule) {
+    if (shouldSchedule && scheduledTime) {
       // Save post as PENDING in scheduled_posts database
       const docRef = doc(db, 'app_data', 'scheduled_posts');
       const docSnap = await getDoc(docRef);
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // Publish immediately if no future scheduledTime provided
+    // Publish immediately if Post Now button was clicked or no schedule requested
     const results = await publishPostToPlatforms({
       businessId,
       content,

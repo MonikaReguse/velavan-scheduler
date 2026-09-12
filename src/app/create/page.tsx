@@ -1,32 +1,34 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
 import { useBusiness } from '@/context/BusinessContext';
 
 export default function CreatePost() {
   const [content, setContent] = useState('');
   const [media, setMedia] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState<string | null>(null);
-  const [altText, setAltText] = useState('');
   const [scheduledTime, setScheduledTime] = useState('');
-  const [platforms, setPlatforms] = useState({ 
-    facebook: false, 
+
+  const [platforms, setPlatforms] = useState({
+    facebook: false,
     instagram: false,
     linkedin: false,
     pinterest: false,
     twitter: false,
-    youtube: false
+    youtube: false,
   });
 
-  // Calculate how many platforms selected
-  const selectedCount = Object.values(platforms).filter(Boolean).length;
+  const handleMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setMedia(e.target.files[0]);
+    }
+  };
 
   useEffect(() => {
     if (media) {
-      const objectUrl = URL.createObjectURL(media);
-      setMediaPreview(objectUrl);
-      return () => URL.revokeObjectURL(objectUrl);
+      const url = URL.createObjectURL(media);
+      setMediaPreview(url);
+      return () => URL.revokeObjectURL(url);
     } else {
       setMediaPreview(null);
     }
@@ -35,8 +37,9 @@ export default function CreatePost() {
   const { selectedBusinessId } = useBusiness();
   const [isPosting, setIsPosting] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e: React.FormEvent | React.MouseEvent, isScheduleTarget: boolean = false) => {
+    if (e && e.preventDefault) e.preventDefault();
+
     if (!selectedBusinessId) {
       alert("Please select a business first.");
       return;
@@ -51,37 +54,44 @@ export default function CreatePost() {
       return;
     }
 
+    if (isScheduleTarget && !scheduledTime) {
+      alert("Please select a date and time in 'Schedule Time' before clicking Schedule Post.");
+      return;
+    }
+
     setIsPosting(true);
 
     let finalMediaUrl = null;
     let finalMediaType = null;
 
     if (media) {
-        try {
-          const uploadFormData = new FormData();
-          uploadFormData.append('file', media);
+      try {
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', media);
+        
+        const uploadRes = await fetch('/api/upload', {
+          method: 'POST',
+          body: uploadFormData
+        });
+        
+        const uploadData = await uploadRes.json();
+        if (uploadData.secure_url) {
+          finalMediaUrl = uploadData.secure_url;
           
-          const uploadRes = await fetch('/api/upload', {
-            method: 'POST',
-            body: uploadFormData
-          });
+          const isVideo = media.type.startsWith('video/') || 
+                          media.name.toLowerCase().match(/\.(mp4|mov|avi|wmv|webm|mkv)$/);
           
-          const uploadData = await uploadRes.json();
-          if (uploadData.secure_url) {
-            finalMediaUrl = uploadData.secure_url;
-            
-            const isVideo = media.type.startsWith('video/') || 
-                            media.name.toLowerCase().match(/\.(mp4|mov|avi|wmv|webm|mkv)$/);
-            
-            finalMediaType = isVideo ? 'video' : 'image';
-            console.log("Detected Media Type:", finalMediaType);
-          } else {
-            throw new Error(uploadData.error?.message || "Upload failed");
-          }
-        } catch (err) {
+          finalMediaType = isVideo ? 'video' : 'image';
+          console.log("Detected Media Type:", finalMediaType);
+        } else {
+          throw new Error(uploadData.error?.message || "Upload failed");
+        }
+      } catch (err) {
         console.error("Cloudinary upload failed:", err);
       }
     }
+
+    const payloadScheduledTime = isScheduleTarget && scheduledTime ? new Date(scheduledTime).toISOString() : null;
 
     try {
       const res = await fetch('/api/post', {
@@ -91,7 +101,8 @@ export default function CreatePost() {
           businessId: selectedBusinessId,
           content: content,
           platforms: selectedPlatforms,
-          scheduledTime: scheduledTime ? new Date(scheduledTime).toISOString() : null,
+          scheduledTime: payloadScheduledTime,
+          isSchedule: isScheduleTarget,
           mediaUrl: finalMediaUrl,
           mediaType: finalMediaType
         })
@@ -145,7 +156,7 @@ export default function CreatePost() {
         {/* Left Column: Form */}
         <div className="w-full lg:w-1/2">
           <div className="bg-white shadow-sm border border-gray-100 rounded-xl p-6">
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={(e) => handleSubmit(e, false)} className="space-y-6">
               
               {/* Post Content */}
               <div>
@@ -157,7 +168,7 @@ export default function CreatePost() {
                   name="content"
                   rows={4}
                   className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                  placeholder="What do you want to share?"
+                  placeholder="What would you like to share?"
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                   required
@@ -169,67 +180,39 @@ export default function CreatePost() {
                 <label htmlFor="media" className="block text-sm font-semibold text-gray-700 mb-2">
                   Attach Media (Image or Video)
                 </label>
-                {!mediaPreview ? (
-                  <div className="flex items-center border border-gray-300 rounded-lg p-2 bg-white transition hover:border-gray-400">
-                    <input
-                      type="file"
-                      id="media"
-                      name="media"
-                      accept="image/*,video/*"
-                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          setMedia(e.target.files[0]);
-                        } else {
-                          setMedia(null);
-                        }
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <div className="relative inline-block border border-gray-300 rounded-lg overflow-hidden bg-gray-50 p-2">
+                
+                {mediaPreview ? (
+                  <div className="relative rounded-lg overflow-hidden border border-gray-200 bg-gray-50 max-h-64 flex items-center justify-center">
                     {media?.type.startsWith('video/') ? (
-                      <video src={mediaPreview} controls className="max-h-48 object-contain rounded" />
+                      <video src={mediaPreview} controls className="max-h-64 w-auto object-contain" />
                     ) : (
-                      <img src={mediaPreview} alt="Preview" className="max-h-48 object-contain rounded" />
+                      <img src={mediaPreview} alt="Upload preview" className="max-h-64 w-auto object-contain" />
                     )}
                     <button
                       type="button"
-                      onClick={() => {
-                        setMedia(null);
-                        setMediaPreview(null);
-                      }}
-                      className="absolute top-2 right-2 bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-700 focus:outline-none shadow-md text-sm font-bold"
+                      onClick={() => setMedia(null)}
+                      className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded-full text-xs hover:bg-red-700 transition"
                       title="Remove media"
                     >
-                      &times;
+                      ✕
                     </button>
                   </div>
+                ) : (
+                  <input
+                    type="file"
+                    id="media"
+                    name="media"
+                    accept="image/*,video/*"
+                    className="w-full text-sm text-gray-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 border border-gray-300 rounded-lg cursor-pointer"
+                    onChange={handleMediaChange}
+                  />
                 )}
-              </div>
-
-              {/* Image Alt Text */}
-              <div>
-                <div className="flex justify-between items-center mb-2">
-                  <label htmlFor="altText" className="block text-sm font-semibold text-gray-400">
-                    Image Alt Text
-                  </label>
-                </div>
-                <input
-                  type="text"
-                  name="altText"
-                  id="altText"
-                  className="w-full border border-gray-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-gray-50 text-gray-700"
-                  placeholder="Describe this image for visually impaired users..."
-                  value={altText}
-                  onChange={(e) => setAltText(e.target.value)}
-                />
               </div>
 
               {/* Schedule Time */}
               <div>
                 <label htmlFor="scheduledTime" className="block text-sm font-semibold text-gray-700 mb-2">
-                  Schedule Time
+                  Schedule Time (Optional for Post Now)
                 </label>
                 <input
                   type="datetime-local"
@@ -238,7 +221,6 @@ export default function CreatePost() {
                   className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                   value={scheduledTime}
                   onChange={(e) => setScheduledTime(e.target.value)}
-                  required
                 />
               </div>
 
@@ -282,19 +264,23 @@ export default function CreatePost() {
                 >
                   Cancel
                 </button>
+
                 <button
                   type="button"
-                  onClick={handleSubmit}
+                  onClick={(e) => handleSubmit(e, false)}
                   disabled={isPosting}
-                  className={`px-6 py-2.5 text-white font-bold text-sm rounded-lg shadow-sm transition ${isPosting ? 'bg-emerald-300' : 'bg-emerald-400 hover:bg-emerald-500'}`}
+                  className={`px-6 py-2.5 text-white font-bold text-sm rounded-lg shadow-sm transition ${isPosting ? 'bg-emerald-300' : 'bg-emerald-500 hover:bg-emerald-600'}`}
                 >
                   {isPosting ? 'Posting...' : 'Post Now'}
                 </button>
+
                 <button
-                  type="submit"
-                  className="px-6 py-2.5 bg-blue-500 text-white font-bold text-sm rounded-lg hover:bg-blue-600 transition shadow-sm"
+                  type="button"
+                  onClick={(e) => handleSubmit(e, true)}
+                  disabled={isPosting}
+                  className={`px-6 py-2.5 text-white font-bold text-sm rounded-lg transition shadow-sm ${isPosting ? 'bg-blue-300' : 'bg-blue-600 hover:bg-blue-700'}`}
                 >
-                  Schedule Post
+                  {isPosting ? 'Scheduling...' : 'Schedule Post'}
                 </button>
               </div>
 
@@ -308,67 +294,61 @@ export default function CreatePost() {
             {/* Preview Header */}
             <div className="px-6 py-4 flex justify-between items-center border-b border-gray-100 bg-white">
               <h2 className="text-sm font-bold text-gray-800">Live Preview</h2>
-              <span className="text-sm font-bold text-blue-600">{selectedCount} Selected</span>
+              <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">
+                {Object.values(platforms).filter(Boolean).length} Selected
+              </span>
             </div>
-            
-            {/* Preview Tabs */}
-            <div className="px-2 pt-2 border-b border-gray-100 bg-white overflow-x-auto whitespace-nowrap scrollbar-hide">
-              <div className="flex space-x-6 px-4">
-                {previewTabs.map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`py-3 text-sm font-bold border-b-2 transition ${
-                      activeTab === tab 
-                        ? 'border-blue-500 text-blue-600' 
-                        : 'border-transparent text-gray-400 hover:text-gray-600'
-                    }`}
-                  >
-                    {tab}
-                  </button>
-                ))}
+
+            {/* Platform Sub-tabs */}
+            <div className="flex border-b border-gray-100 px-6 bg-gray-50/50 space-x-6 overflow-x-auto">
+              {previewTabs.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`py-3 text-xs font-semibold whitespace-nowrap border-b-2 transition ${
+                    activeTab === tab 
+                      ? 'border-blue-600 text-blue-600' 
+                      : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {/* Preview Card Body */}
+            <div className="p-6 flex-1 flex items-start justify-center bg-gray-50/30">
+              <div className="w-full max-w-md bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="p-4 flex items-center space-x-3 border-b border-gray-50">
+                  <div className="w-10 h-10 rounded-full bg-gray-200 flex-shrink-0" />
+                  <div>
+                    <div className="h-3.5 bg-gray-200 rounded w-28 mb-1.5" />
+                    <div className="h-2.5 bg-gray-100 rounded w-16" />
+                  </div>
+                </div>
+
+                <div className="p-4">
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap min-h-[40px]">
+                    {content || <span className="text-gray-400 italic">Your post text will appear here...</span>}
+                  </p>
+                </div>
+
+                {mediaPreview && (
+                  <div className="border-t border-gray-100 bg-black flex items-center justify-center max-h-80 overflow-hidden">
+                    {media?.type.startsWith('video/') ? (
+                      <video src={mediaPreview} controls className="max-h-80 w-full object-contain" />
+                    ) : (
+                      <img src={mediaPreview} alt="Preview" className="max-h-80 w-full object-contain" />
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Preview Body */}
-            <div className="flex-1 bg-[#f4f6f8] flex flex-col items-center justify-center p-8 text-center relative">
-              {content || mediaPreview ? (
-                <div className="bg-white border border-gray-200 rounded-xl p-4 max-w-sm w-full text-left shadow-md absolute top-12">
-                  {/* Mock Post Preview */}
-                  <div className="flex items-center space-x-3 mb-3">
-                    <div className="w-10 h-10 bg-gray-200 rounded-full"></div>
-                    <div>
-                      <div className="h-3 w-24 bg-gray-200 rounded mb-1.5"></div>
-                      <div className="h-2 w-16 bg-gray-100 rounded"></div>
-                    </div>
-                  </div>
-                  {content && <p className="text-sm text-gray-800 mb-3 whitespace-pre-wrap">{content}</p>}
-                  {mediaPreview && (
-                    <div className="rounded-lg overflow-hidden border border-gray-100 mt-2">
-                      {media?.type.startsWith('video/') ? (
-                        <video src={mediaPreview} className="w-full max-h-64 object-cover" />
-                      ) : (
-                        <img src={mediaPreview} alt="Preview" className="w-full max-h-64 object-cover" />
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center opacity-40">
-                  <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mb-4 border-2 border-white shadow-sm">
-                    {/* SVG Eye Icon */}
-                    <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                  </div>
-                  <p className="text-gray-500 font-bold text-sm tracking-wide">Select one or more accounts to see a live preview.</p>
-                </div>
-              )}
-            </div>
           </div>
         </div>
-        
+
       </div>
     </div>
   );

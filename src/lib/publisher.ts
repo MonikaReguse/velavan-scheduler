@@ -190,24 +190,21 @@ export async function publishPostToPlatforms({
         const creationId = containerData.id;
         let isReady = false;
 
-        if (mediaType === 'video') {
-          for (let i = 0; i < 15; i++) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            const statusRes = await fetch(`https://graph.facebook.com/v18.0/${creationId}?fields=status_code&access_token=${igConfig.accessToken}`);
-            const statusData = await statusRes.json();
-            if (statusData.status_code === 'FINISHED') {
-              isReady = true;
-              break;
-            } else if (statusData.status_code === 'ERROR') {
-              return { platform: 'instagram', status: 'error', error: 'Instagram failed to process the video.' };
-            }
+        // Poll container status (required for both image & video before publish)
+        for (let i = 0; i < 15; i++) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          const statusRes = await fetch(`https://graph.facebook.com/v18.0/${creationId}?fields=status_code&access_token=${igConfig.accessToken}`);
+          const statusData = await statusRes.json();
+          if (statusData.status_code === 'FINISHED') {
+            isReady = true;
+            break;
+          } else if (statusData.status_code === 'ERROR') {
+            return { platform: 'instagram', status: 'error', error: 'Instagram failed to process the media container.' };
           }
-        } else {
-          isReady = true;
         }
 
         if (!isReady) {
-          return { platform: 'instagram', status: 'error', error: 'Instagram took too long to process the video.' };
+          return { platform: 'instagram', status: 'error', error: 'Instagram took too long to process the media.' };
         }
 
         const publishRes = await fetch(`https://graph.facebook.com/v18.0/${igConfig.igAccountId}/media_publish`, {
