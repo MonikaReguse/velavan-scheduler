@@ -3,6 +3,8 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { publishPostToPlatforms, getConfig } from '@/lib/publisher';
 
+export const maxDuration = 60; // Allow Vercel up to 60 seconds for background execution
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -18,14 +20,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No configuration found for this business' }, { status: 400 });
     }
 
-    // Strict decision:
-    // If isSchedule is explicitly true -> Save as Scheduled Post
-    // If isSchedule is explicitly false -> Publish Immediately Now
-    // Otherwise check if scheduledTime is in future
     const shouldSchedule = isSchedule === true || (isSchedule !== false && Boolean(scheduledTime) && new Date(scheduledTime).getTime() > Date.now() - 60000);
 
     if (shouldSchedule && scheduledTime) {
-      // Save post as PENDING in scheduled_posts database
       const docRef = doc(db, 'app_data', 'scheduled_posts');
       const docSnap = await getDoc(docRef);
       let scheduledList: any[] = [];
@@ -56,7 +53,6 @@ export async function POST(request: Request) {
       });
     }
 
-    // Publish immediately if Post Now button was clicked
     const results = await publishPostToPlatforms({
       businessId,
       content,

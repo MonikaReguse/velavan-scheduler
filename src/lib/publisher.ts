@@ -190,9 +190,12 @@ export async function publishPostToPlatforms({
         const creationId = containerData.id;
         let isReady = false;
 
-        // Poll container status (required for both image & video before publish)
-        for (let i = 0; i < 15; i++) {
-          await new Promise(resolve => setTimeout(resolve, 3000));
+        // Poll container status (fast 2s delay for images, 15s max for videos)
+        const maxPolls = mediaType === 'video' ? 12 : 3;
+        const delayMs = mediaType === 'video' ? 2500 : 1500;
+
+        for (let i = 0; i < maxPolls; i++) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
           const statusRes = await fetch(`https://graph.facebook.com/v18.0/${creationId}?fields=status_code&access_token=${igConfig.accessToken}`);
           const statusData = await statusRes.json();
           if (statusData.status_code === 'FINISHED') {
@@ -203,8 +206,8 @@ export async function publishPostToPlatforms({
           }
         }
 
-        if (!isReady) {
-          return { platform: 'instagram', status: 'error', error: 'Instagram took too long to process the media.' };
+        if (!isReady && mediaType === 'video') {
+          return { platform: 'instagram', status: 'error', error: 'Instagram took too long to process the video.' };
         }
 
         const publishRes = await fetch(`https://graph.facebook.com/v18.0/${igConfig.igAccountId}/media_publish`, {
@@ -227,18 +230,16 @@ export async function publishPostToPlatforms({
     })());
   }
 
-  // Wait for parallel platform tasks to resolve
-  const resolvedResults = await Promise.all(platformPromises);
-  results.push(...resolvedResults);
-
   // --- PINTEREST NATIVE POSTING ---
   if (platforms.includes('pinterest')) {
-    const pinConfig = config.pinterest;
-    if (!pinConfig || !pinConfig.accessToken) {
-      results.push({ platform: 'pinterest', status: 'error', error: 'Pinterest is not fully connected.' });
-    } else if (!mediaUrl) {
-      results.push({ platform: 'pinterest', status: 'error', error: 'Pinterest requires an image or video to post.' });
-    } else {
+    platformPromises.push((async () => {
+      const pinConfig = config.pinterest;
+      if (!pinConfig || !pinConfig.accessToken) {
+        return { platform: 'pinterest', status: 'error', error: 'Pinterest is not fully connected.' };
+      }
+      if (!mediaUrl) {
+        return { platform: 'pinterest', status: 'error', error: 'Pinterest requires an image or video to post.' };
+      }
       try {
         const boardsRes = await fetch('https://api.pinterest.com/v5/boards', {
           headers: { 'Authorization': `Bearer ${pinConfig.accessToken}` }
@@ -247,17 +248,12 @@ export async function publishPostToPlatforms({
 
         if (boardsData.items && boardsData.items.length > 0) {
           const boardId = boardsData.items[0].id;
-
           const pinPayload = {
             board_id: boardId,
             title: content.substring(0, 50),
             description: content,
-            media_source: {
-              source_type: "image_url",
-              url: mediaUrl
-            }
+            media_source: { source_type: "image_url", url: mediaUrl }
           };
-
           const pinRes = await fetch('https://api.pinterest.com/v5/pins', {
             method: 'POST',
             headers: { 
@@ -267,45 +263,36 @@ export async function publishPostToPlatforms({
             body: JSON.stringify(pinPayload)
           });
           const pinData = await pinRes.json();
-
           if (pinData.code && pinData.message) {
-            results.push({ platform: 'pinterest', status: 'error', error: pinData.message });
-          } else {
-            results.push({ platform: 'pinterest', status: 'success', id: pinData.id });
+            return { platform: 'pinterest', status: 'error', error: pinData.message };
           }
+          return { platform: 'pinterest', status: 'success', id: pinData.id };
         } else {
-          results.push({ platform: 'pinterest', status: 'error', error: 'No Pinterest boards found. You must create a board first.' });
+          return { platform: 'pinterest', status: 'error', error: 'No Pinterest boards found. You must create a board first.' };
         }
       } catch (e: any) {
-        results.push({ platform: 'pinterest', status: 'error', error: e.message });
+        return { platform: 'pinterest', status: 'error', error: e.message };
       }
-    }
+    })());
   }
 
   // --- YOUTUBE NATIVE POSTING ---
   if (platforms.includes('youtube')) {
-    const ytConfig = config.youtube;
-    if (!ytConfig || !ytConfig.accessToken) {
-      results.push({ platform: 'youtube', status: 'error', error: 'YouTube is not fully connected.' });
-    } else if (!mediaUrl) {
-      results.push({ platform: 'youtube', status: 'error', error: 'YouTube requires a video file to post.' });
-    } else {
+    platformPromises.push((async () => {
+      const ytConfig = config.youtube;
+      if (!ytConfig || !ytConfig.accessToken) {
+        return { platform: 'youtube', status: 'error', error: 'YouTube is not fully connected.' };
+      }
+      if (!mediaUrl) {
+        return { platform: 'youtube', status: 'error', error: 'YouTube requires a video file to post.' };
+      }
       try {
         const videoRes = await fetch(mediaUrl);
         const videoBuffer = await videoRes.arrayBuffer();
-
         const snippet = {
-          snippet: {
-            title: content.substring(0, 100) || "Video Post",
-            description: content,
-            categoryId: "22"
-          },
-          status: {
-            privacyStatus: "public",
-            selfDeclaredMadeForKids: false
-          }
+          snippet: { title: content.substring(0, 100) || "Video Post", description: content, categoryId: "22" },
+          status: { privacyStatus: "public", selfDeclaredMadeForKids: false }
         };
-
         const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
           method: 'POST',
           headers: {
@@ -315,37 +302,34 @@ export async function publishPostToPlatforms({
           },
           body: JSON.stringify(snippet)
         });
-        
         if (!initRes.ok) {
           const errorData = await initRes.json();
           throw new Error(errorData.error?.message || 'Failed to initialize YouTube upload');
         }
-        
         const uploadUrl = initRes.headers.get('Location');
-        
         if (uploadUrl) {
           const uploadReq = await fetch(uploadUrl, {
             method: 'PUT',
-            headers: {
-              'Content-Length': videoBuffer.byteLength.toString()
-            },
+            headers: { 'Content-Length': videoBuffer.byteLength.toString() },
             body: Buffer.from(videoBuffer)
           });
           const uploadData = await uploadReq.json();
-          
           if (uploadData.error) {
-            results.push({ platform: 'youtube', status: 'error', error: uploadData.error.message });
-          } else {
-            results.push({ platform: 'youtube', status: 'success', id: uploadData.id });
+            return { platform: 'youtube', status: 'error', error: uploadData.error.message };
           }
+          return { platform: 'youtube', status: 'success', id: uploadData.id };
         } else {
-          results.push({ platform: 'youtube', status: 'error', error: 'Did not receive upload URL from YouTube' });
+          return { platform: 'youtube', status: 'error', error: 'Did not receive upload URL from YouTube' };
         }
       } catch (e: any) {
-        results.push({ platform: 'youtube', status: 'error', error: e.message });
+        return { platform: 'youtube', status: 'error', error: e.message };
       }
-    }
+    })());
   }
+
+  // Wait for all platforms in parallel
+  const resolvedResults = await Promise.all(platformPromises);
+  results.push(...resolvedResults);
 
   // --- SAVE POST HISTORY TO FIREBASE ---
   try {

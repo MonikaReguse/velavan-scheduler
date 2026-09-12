@@ -3,6 +3,8 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { processScheduledPosts } from '@/lib/processScheduled';
 
+export const maxDuration = 60; // Allow Vercel up to 60 seconds for background execution
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
