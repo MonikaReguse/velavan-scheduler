@@ -190,9 +190,9 @@ export async function publishPostToPlatforms({
         const creationId = containerData.id;
         let isReady = false;
 
-        // Poll container status (fast 2s delay for images, 15s max for videos)
-        const maxPolls = mediaType === 'video' ? 12 : 3;
-        const delayMs = mediaType === 'video' ? 2500 : 1500;
+        // Poll container status until FINISHED (up to 15s for both image & video)
+        const maxPolls = mediaType === 'video' ? 12 : 8;
+        const delayMs = 1500;
 
         for (let i = 0; i < maxPolls; i++) {
           await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -206,8 +206,8 @@ export async function publishPostToPlatforms({
           }
         }
 
-        if (!isReady && mediaType === 'video') {
-          return { platform: 'instagram', status: 'error', error: 'Instagram took too long to process the video.' };
+        if (!isReady) {
+          return { platform: 'instagram', status: 'error', error: 'Instagram took too long to process the media.' };
         }
 
         const publishRes = await fetch(`https://graph.facebook.com/v18.0/${igConfig.igAccountId}/media_publish`, {
