@@ -42,6 +42,43 @@ export default function CreatePost() {
   const { selectedBusinessId } = useBusiness();
   const [isPosting, setIsPosting] = useState(false);
 
+  const compressImageIfNeeded = async (file: File): Promise<File> => {
+    if (!file.type.startsWith('image/') || file.size <= 3.5 * 1024 * 1024) {
+      return file;
+    }
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1920;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", { type: 'image/jpeg' }));
+          } else {
+            resolve(file);
+          }
+        }, 'image/jpeg', 0.85);
+      };
+      img.onerror = () => resolve(file);
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
   const getScheduledISO = () => {
     if (!scheduleDate) return null;
     let hour = parseInt(scheduleHour, 10);
@@ -95,8 +132,9 @@ export default function CreatePost() {
 
     if (media) {
       try {
+        const processedFile = await compressImageIfNeeded(media);
         const uploadFormData = new FormData();
-        uploadFormData.append('file', media);
+        uploadFormData.append('file', processedFile);
         
         const uploadRes = await fetch('/api/upload', {
           method: 'POST',
@@ -107,16 +145,19 @@ export default function CreatePost() {
         if (uploadData.secure_url) {
           finalMediaUrl = uploadData.secure_url;
           
-          const isVideo = media.type.startsWith('video/') || 
-                          media.name.toLowerCase().match(/\.(mp4|mov|avi|wmv|webm|mkv)$/);
+          const isVideo = processedFile.type.startsWith('video/') || 
+                          processedFile.name.toLowerCase().match(/\.(mp4|mov|avi|wmv|webm|mkv)$/);
           
           finalMediaType = isVideo ? 'video' : 'image';
-          console.log("Detected Media Type:", finalMediaType);
         } else {
-          throw new Error(uploadData.error?.message || "Upload failed");
+          alert("Media Upload Error: " + (uploadData.error || "Failed to upload image. Please try another image."));
+          setIsPosting(false);
+          return;
         }
-      } catch (err) {
-        console.error("Cloudinary upload failed:", err);
+      } catch (err: any) {
+        alert("Media Upload Error: " + (err.message || "Failed to upload media file."));
+        setIsPosting(false);
+        return;
       }
     }
 
