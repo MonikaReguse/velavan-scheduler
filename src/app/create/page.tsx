@@ -162,7 +162,7 @@ export default function CreatePost() {
         setMedia(null);
         setScheduleDate("");
       } else {
-        alert("Error: " + data.error);
+        alert("Error: " + (data.message || data.error));
       }
     } catch (error) {
       alert("Failed to send post.");
