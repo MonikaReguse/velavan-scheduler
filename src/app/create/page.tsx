@@ -142,40 +142,63 @@ export default function CreatePost() {
 
         const processedFile = isVideo ? media : await compressImageIfNeeded(media);
 
-        // Direct signed Cloudinary upload to bypass serverless 4.5MB payload limit
+        // 1. Direct Cloudinary Upload via unsigned preset (bypasses Vercel 4.5MB limit completely)
         let uploadSuccess = false;
         try {
-          const signRes = await fetch('/api/sign');
-          if (signRes.ok) {
-            const signData = await signRes.json();
-            if (signData.signature && signData.apiKey && signData.cloudName) {
-              const directFormData = new FormData();
-              directFormData.append('file', processedFile);
-              directFormData.append('api_key', signData.apiKey);
-              directFormData.append('timestamp', signData.timestamp);
-              directFormData.append('signature', signData.signature);
+          const directFormData = new FormData();
+          directFormData.append('file', processedFile);
+          directFormData.append('upload_preset', 'velavan_uploads');
 
-              const resourceType = isVideo ? 'video' : 'image';
-              const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${signData.cloudName}/${resourceType}/upload`, {
-                method: 'POST',
-                body: directFormData
-              });
+          const cloudRes = await fetch('https://api.cloudinary.com/v1_1/fxjwtjqs/auto/upload', {
+            method: 'POST',
+            body: directFormData
+          });
 
-              if (cloudRes.ok) {
-                const cloudData = await cloudRes.json();
-                if (cloudData.secure_url) {
-                  finalMediaUrl = cloudData.secure_url;
+          const cloudData = await cloudRes.json();
+          if (cloudRes.ok && cloudData.secure_url) {
+            finalMediaUrl = cloudData.secure_url;
+            uploadSuccess = true;
+          } else {
+            console.warn("Direct preset upload response error:", cloudData);
+          }
+        } catch (directErr) {
+          console.warn("Direct preset upload fetch failed:", directErr);
+        }
+
+        // 2. Fallback to signed upload if preset failed
+        if (!uploadSuccess) {
+          try {
+            const signRes = await fetch('/api/sign');
+            if (signRes.ok) {
+              const signData = await signRes.json();
+              if (signData.signature && signData.apiKey && signData.cloudName) {
+                const signedFormData = new FormData();
+                signedFormData.append('file', processedFile);
+                signedFormData.append('api_key', signData.apiKey);
+                signedFormData.append('timestamp', signData.timestamp);
+                signedFormData.append('signature', signData.signature);
+
+                const signedRes = await fetch(`https://api.cloudinary.com/v1_1/${signData.cloudName}/auto/upload`, {
+                  method: 'POST',
+                  body: signedFormData
+                });
+
+                const signedData = await signedRes.json();
+                if (signedRes.ok && signedData.secure_url) {
+                  finalMediaUrl = signedData.secure_url;
                   uploadSuccess = true;
+                } else {
+                  console.warn("Signed upload response error:", signedData);
                 }
               }
             }
+          } catch (signErr) {
+            console.warn("Signed upload fetch error:", signErr);
           }
-        } catch (directErr) {
-          console.warn("Direct upload error, falling back to /api/upload:", directErr);
         }
 
-        // Fallback to /api/upload if direct upload didn't succeed
-        if (!uploadSuccess) {
+        // 3. Last resort fallback to /api/upload ONLY if file is small enough (< 4MB)
+        if (!uploadSuccess && processedFile.size < 4 * 1024 * 1024) {
           const uploadFormData = new FormData();
           uploadFormData.append('file', processedFile);
           
@@ -184,20 +207,20 @@ export default function CreatePost() {
             body: uploadFormData
           });
           
-          if (!uploadRes.ok) {
-            const errText = await uploadRes.text();
-            throw new Error(`Upload server error (${uploadRes.status}): ${errText.slice(0, 80)}`);
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            if (uploadData.secure_url) {
+              finalMediaUrl = uploadData.secure_url;
+              uploadSuccess = true;
+            }
           }
+        }
 
-          const uploadData = await uploadRes.json();
-          if (uploadData.secure_url) {
-            finalMediaUrl = uploadData.secure_url;
-          } else {
-            alert("Media Upload Error: " + (uploadData.error || "Failed to upload media."));
-            setIsPosting(false);
-            setPostingStatus('');
-            return;
-          }
+        if (!uploadSuccess) {
+          alert("Media Upload Error: Could not upload media file to Cloudinary. Please check file format and try again.");
+          setIsPosting(false);
+          setPostingStatus('');
+          return;
         }
       } catch (err: any) {
         alert("Media Upload Error: " + (err.message || "Failed to upload media file."));
