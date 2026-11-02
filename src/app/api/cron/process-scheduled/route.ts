@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { processScheduledPosts } from '@/lib/processScheduled';
 
+export const maxDuration = 60; // Allow up to 60 seconds for background execution
+
 export async function GET() {
   try {
     const result = await processScheduledPosts();

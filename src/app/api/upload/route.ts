@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { v2 as cloudinary } from 'cloudinary';
 
+export const maxDuration = 60; // Allow up to 60 seconds for uploads and processing
+
 // Note: Cloudinary expects raw bytes or a local file path.
 // We will read the file as an arrayBuffer and pass it as a base64 string or stream.
 

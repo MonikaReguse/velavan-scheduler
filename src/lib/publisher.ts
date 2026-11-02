@@ -1,6 +1,19 @@
 import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
+export function formatVideoUrlForSocial(url?: string | null): string | null {
+  if (!url) return null;
+  if (url.includes('/video/upload/')) {
+    if (url.includes('vc_h264') && url.includes('f_mp4')) {
+      return url;
+    }
+    let formatted = url.replace('/video/upload/', '/video/upload/f_mp4,vc_h264,ac_aac/');
+    formatted = formatted.replace(/\.[a-zA-Z0-9]+(\?.*)?$/, '.mp4$1');
+    return formatted;
+  }
+  return url;
+}
+
 export async function getConfig(businessId: string) {
   const docRef = doc(db, 'app_data', 'settings');
   const docSnap = await getDoc(docRef);
@@ -47,7 +60,9 @@ export async function publishPostToPlatforms({
         if (mediaUrl) {
           if (mediaType === 'video') {
             fbEndpoint += '/videos';
-            payload.file_url = mediaUrl;
+            payload.file_url = formatVideoUrlForSocial(mediaUrl);
+            payload.description = content; // Required by Facebook for video caption
+            payload.title = content ? content.slice(0, 80) : "Video Post";
           } else {
             fbEndpoint += '/photos';
             payload.url = mediaUrl;
@@ -86,6 +101,10 @@ export async function publishPostToPlatforms({
         };
 
         if (mediaUrl) {
+          const isVideo = mediaType === 'video';
+          const formattedMediaUrl = isVideo ? formatVideoUrlForSocial(mediaUrl) : mediaUrl;
+          const recipe = isVideo ? 'urn:li:digitalmediaRecipe:feedshare-video' : 'urn:li:digitalmediaRecipe:feedshare-image';
+
           const registerRes = await fetch('https://api.linkedin.com/v2/assets?action=registerUpload', {
             method: 'POST',
             headers: {
@@ -95,7 +114,7 @@ export async function publishPostToPlatforms({
             },
             body: JSON.stringify({
               registerUploadRequest: {
-                recipes: [mediaType === 'video' ? 'urn:li:digitalmediaRecipe:feedshare-video' : 'urn:li:digitalmediaRecipe:feedshare-image'],
+                recipes: [recipe],
                 owner: liConfig.authorUrn,
                 serviceRelationships: [{ relationshipType: "OWNER", identifier: "urn:li:userGeneratedContent" }]
               }
@@ -107,21 +126,44 @@ export async function publishPostToPlatforms({
             const uploadUrl = uploadMechanism.uploadUrl;
             const assetUrn = registerData.value.asset;
 
-            const mediaRes = await fetch(mediaUrl);
+            const mediaRes = await fetch(formattedMediaUrl!);
             const mediaBlob = await mediaRes.blob();
 
             await fetch(uploadUrl, {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${liConfig.accessToken}` },
+              method: 'PUT',
+              headers: { 
+                'Authorization': `Bearer ${liConfig.accessToken}`,
+                'Content-Type': isVideo ? 'video/mp4' : 'application/octet-stream'
+              },
               body: mediaBlob
             });
 
-            specificContent["com.linkedin.ugc.ShareContent"].shareMediaCategory = mediaType === 'video' ? "VIDEO" : "IMAGE";
+            // For videos, LinkedIn needs a few seconds to process the asset before ugcPosts can use it
+            if (isVideo) {
+              const assetId = assetUrn.replace('urn:li:digitalmediaAsset:', '');
+              for (let i = 0; i < 8; i++) {
+                await new Promise(r => setTimeout(r, 2000));
+                try {
+                  const checkRes = await fetch(`https://api.linkedin.com/v2/assets/${assetId}`, {
+                    headers: {
+                      'Authorization': `Bearer ${liConfig.accessToken}`,
+                      'X-Restli-Protocol-Version': '2.0.0'
+                    }
+                  });
+                  const checkData = await checkRes.json();
+                  if (checkData?.recipes?.[0]?.status === 'AVAILABLE') {
+                    break;
+                  }
+                } catch (_) {}
+              }
+            }
+
+            specificContent["com.linkedin.ugc.ShareContent"].shareMediaCategory = isVideo ? "VIDEO" : "IMAGE";
             specificContent["com.linkedin.ugc.ShareContent"].media = [{
               status: "READY",
-              description: { text: "Uploaded media" },
+              description: { text: content ? content.slice(0, 200) : "Uploaded media" },
               media: assetUrn,
-              title: { text: "Media" }
+              title: { text: content ? content.slice(0, 100) : "Media" }
             }];
           }
         }
@@ -164,13 +206,17 @@ export async function publishPostToPlatforms({
       }
       
       try {
+        const isVideo = mediaType === 'video';
+        const formattedMediaUrl = isVideo ? formatVideoUrlForSocial(mediaUrl) : mediaUrl;
+
         const containerPayload: any = {
           access_token: igConfig.accessToken,
           caption: content
         };
-        if (mediaType === 'video') {
+        if (isVideo) {
           containerPayload.media_type = 'REELS';
-          containerPayload.video_url = mediaUrl;
+          containerPayload.video_url = formattedMediaUrl;
+          containerPayload.share_to_feed = true; // Shows Reel in both Reels tab AND main Instagram Feed grid
         } else {
           containerPayload.media_type = 'IMAGE';
           containerPayload.image_url = mediaUrl;
@@ -190,24 +236,26 @@ export async function publishPostToPlatforms({
         const creationId = containerData.id;
         let isReady = false;
 
-        // Poll container status until FINISHED (up to 15s for both image & video)
-        const maxPolls = mediaType === 'video' ? 12 : 8;
-        const delayMs = 1500;
+        // Poll container status until FINISHED
+        // Images finish in 1-3 seconds. Videos/Reels typically take 15-40 seconds.
+        const maxPolls = isVideo ? 18 : 6;
+        const delayMs = isVideo ? 2500 : 1500;
 
         for (let i = 0; i < maxPolls; i++) {
           await new Promise(resolve => setTimeout(resolve, delayMs));
-          const statusRes = await fetch(`https://graph.facebook.com/v18.0/${creationId}?fields=status_code&access_token=${igConfig.accessToken}`);
+          const statusRes = await fetch(`https://graph.facebook.com/v18.0/${creationId}?fields=status_code,status&access_token=${igConfig.accessToken}`);
           const statusData = await statusRes.json();
           if (statusData.status_code === 'FINISHED') {
             isReady = true;
             break;
           } else if (statusData.status_code === 'ERROR') {
-            return { platform: 'instagram', status: 'error', error: 'Instagram failed to process the media container.' };
+            const errDetail = statusData.status || statusData.error?.message || 'Instagram video container processing failed.';
+            return { platform: 'instagram', status: 'error', error: `Instagram error: ${errDetail}` };
           }
         }
 
         if (!isReady) {
-          return { platform: 'instagram', status: 'error', error: 'Instagram took too long to process the media.' };
+          return { platform: 'instagram', status: 'error', error: 'Instagram took too long to process the video container (timed out after 45s).' };
         }
 
         const publishRes = await fetch(`https://graph.facebook.com/v18.0/${igConfig.igAccountId}/media_publish`, {
@@ -239,6 +287,9 @@ export async function publishPostToPlatforms({
       }
       if (!mediaUrl) {
         return { platform: 'pinterest', status: 'error', error: 'Pinterest requires an image or video to post.' };
+      }
+      if (mediaType === 'video') {
+        return { platform: 'pinterest', status: 'error', error: 'Pinterest API only supports images for pins via standard API.' };
       }
       try {
         const boardsRes = await fetch('https://api.pinterest.com/v5/boards', {

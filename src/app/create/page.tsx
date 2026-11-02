@@ -41,6 +41,7 @@ export default function CreatePost() {
 
   const { selectedBusinessId } = useBusiness();
   const [isPosting, setIsPosting] = useState(false);
+  const [postingStatus, setPostingStatus] = useState('');
 
   const compressImageIfNeeded = async (file: File): Promise<File> => {
     if (!file.type.startsWith('image/') || file.size <= 3.5 * 1024 * 1024) {
@@ -126,42 +127,88 @@ export default function CreatePost() {
     }
 
     setIsPosting(true);
+    setPostingStatus("Preparing media upload...");
 
     let finalMediaUrl = null;
     let finalMediaType = null;
 
     if (media) {
       try {
-        const processedFile = await compressImageIfNeeded(media);
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', processedFile);
-        
-        const uploadRes = await fetch('/api/upload', {
-          method: 'POST',
-          body: uploadFormData
-        });
-        
-        const uploadData = await uploadRes.json();
-        if (uploadData.secure_url) {
-          finalMediaUrl = uploadData.secure_url;
+        const isVideo = media.type.startsWith('video/') || 
+                        Boolean(media.name.toLowerCase().match(/\.(mp4|mov|avi|wmv|webm|mkv|m4v)$/));
+        finalMediaType = isVideo ? 'video' : 'image';
+
+        setPostingStatus(isVideo ? "Uploading video to media cloud (please wait)..." : "Uploading image...");
+
+        const processedFile = isVideo ? media : await compressImageIfNeeded(media);
+
+        // Direct signed Cloudinary upload to bypass serverless 4.5MB payload limit
+        let uploadSuccess = false;
+        try {
+          const signRes = await fetch('/api/sign');
+          if (signRes.ok) {
+            const signData = await signRes.json();
+            if (signData.signature && signData.apiKey && signData.cloudName) {
+              const directFormData = new FormData();
+              directFormData.append('file', processedFile);
+              directFormData.append('api_key', signData.apiKey);
+              directFormData.append('timestamp', signData.timestamp);
+              directFormData.append('signature', signData.signature);
+
+              const resourceType = isVideo ? 'video' : 'image';
+              const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${signData.cloudName}/${resourceType}/upload`, {
+                method: 'POST',
+                body: directFormData
+              });
+
+              if (cloudRes.ok) {
+                const cloudData = await cloudRes.json();
+                if (cloudData.secure_url) {
+                  finalMediaUrl = cloudData.secure_url;
+                  uploadSuccess = true;
+                }
+              }
+            }
+          }
+        } catch (directErr) {
+          console.warn("Direct upload error, falling back to /api/upload:", directErr);
+        }
+
+        // Fallback to /api/upload if direct upload didn't succeed
+        if (!uploadSuccess) {
+          const uploadFormData = new FormData();
+          uploadFormData.append('file', processedFile);
           
-          const isVideo = processedFile.type.startsWith('video/') || 
-                          processedFile.name.toLowerCase().match(/\.(mp4|mov|avi|wmv|webm|mkv)$/);
+          const uploadRes = await fetch('/api/upload', {
+            method: 'POST',
+            body: uploadFormData
+          });
           
-          finalMediaType = isVideo ? 'video' : 'image';
-        } else {
-          alert("Media Upload Error: " + (uploadData.error || "Failed to upload image. Please try another image."));
-          setIsPosting(false);
-          return;
+          if (!uploadRes.ok) {
+            const errText = await uploadRes.text();
+            throw new Error(`Upload server error (${uploadRes.status}): ${errText.slice(0, 80)}`);
+          }
+
+          const uploadData = await uploadRes.json();
+          if (uploadData.secure_url) {
+            finalMediaUrl = uploadData.secure_url;
+          } else {
+            alert("Media Upload Error: " + (uploadData.error || "Failed to upload media."));
+            setIsPosting(false);
+            setPostingStatus('');
+            return;
+          }
         }
       } catch (err: any) {
         alert("Media Upload Error: " + (err.message || "Failed to upload media file."));
         setIsPosting(false);
+        setPostingStatus('');
         return;
       }
     }
 
     try {
+      setPostingStatus(isScheduleTarget ? "Scheduling post..." : "Publishing to selected platforms (transcoding video if needed)...");
       const res = await fetch('/api/post', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -209,6 +256,7 @@ export default function CreatePost() {
       alert("Failed to send post.");
     } finally {
       setIsPosting(false);
+      setPostingStatus('');
     }
   };
 
@@ -363,6 +411,14 @@ export default function CreatePost() {
                   ))}
                 </div>
               </div>
+
+              {/* Status Indicator */}
+              {postingStatus && (
+                <div className="p-3.5 bg-blue-50 border border-blue-200 text-blue-800 text-sm font-medium rounded-lg flex items-center space-x-3 shadow-sm animate-pulse">
+                  <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+                  <span>{postingStatus}</span>
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="pt-6 flex justify-end items-center space-x-3 border-t border-gray-100 mt-8">

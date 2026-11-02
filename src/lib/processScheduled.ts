@@ -16,6 +16,8 @@ export async function processScheduledPosts() {
 
     const updatedList = [];
 
+    let hasChanges = false;
+
     for (const post of scheduledList) {
       const scheduledTimeMs = new Date(post.scheduledTime).getTime();
       
@@ -30,14 +32,21 @@ export async function processScheduledPosts() {
             mediaType: post.mediaType
           });
           console.log(`[Scheduler] Published post ${post.id} with results:`, results);
+
+          const successCount = results.filter((r: any) => r.status === 'success').length;
+          const status = successCount > 0 ? 'PUBLISHED' : 'FAILED';
+          
           processedCount++;
+          hasChanges = true;
           updatedList.push({
             ...post,
-            status: 'PUBLISHED',
+            status,
+            results,
             publishedAt: new Date().toISOString()
           });
         } catch (err) {
           console.error(`[Scheduler] Error publishing scheduled post ${post.id}:`, err);
+          hasChanges = true;
           updatedList.push({
             ...post,
             status: 'FAILED',
@@ -49,7 +58,7 @@ export async function processScheduledPosts() {
       }
     }
 
-    if (processedCount > 0) {
+    if (hasChanges) {
       await setDoc(docRef, { list: updatedList }, { merge: true });
     }
 
