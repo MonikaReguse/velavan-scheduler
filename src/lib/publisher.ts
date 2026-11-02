@@ -14,12 +14,32 @@ export function formatVideoUrlForSocial(url?: string | null): string | null {
   return url;
 }
 
+import fs from 'fs';
+import path from 'path';
+
 export async function getConfig(businessId: string) {
-  const docRef = doc(db, 'app_data', 'settings');
-  const docSnap = await getDoc(docRef);
-  if (docSnap.exists() && docSnap.data().businesses) {
-    return docSnap.data().businesses[businessId] || null;
+  try {
+    const docRef = doc(db, 'app_data', 'settings');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists() && docSnap.data().businesses) {
+      return docSnap.data().businesses[businessId] || null;
+    }
+  } catch (err) {
+    console.warn("[getConfig] Firestore failed, falling back to local data.json:", err);
   }
+
+  try {
+    const localDataPath = path.join(process.cwd(), 'data.json');
+    if (fs.existsSync(localDataPath)) {
+      const fileData = JSON.parse(fs.readFileSync(localDataPath, 'utf8'));
+      if (fileData.businesses && fileData.businesses[businessId]) {
+        return fileData.businesses[businessId];
+      }
+    }
+  } catch (e) {
+    console.error("[getConfig] Local fallback error:", e);
+  }
+
   return null;
 }
 
